@@ -1,10 +1,11 @@
-const CACHE = "weather-station-v2";
+const CACHE = "weather-station-v3";
 const ASSETS = [
   "./",
   "./index.html",
   "./app.js",
   "./xlsx.full.min.js",
   "./data_processing.py",
+  "./data_processing_weekly.py",
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

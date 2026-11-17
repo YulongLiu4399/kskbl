@@ -1,12 +1,17 @@
 const PYODIDE_URL = "https://cdn.jsdelivr.net/pyodide/v0.26.2/full/";
 
-const OPTIONS = [
+const DAILY_OPTIONS = [
   ["00", "气象站面板（总图）"],
   ["01", "概览"],
   ["02", "PM 与能见度"],
   ["03", "相关性热图"],
   ["04", "风向风速"],
   ["05", "分布直方图"],
+  ["data", "清洗后的数据表（CSV）"],
+];
+
+const PERIOD_OPTIONS = [
+  ["figure", "周报 / 月报总图"],
   ["data", "清洗后的数据表（CSV）"],
 ];
 
@@ -21,10 +26,20 @@ const results = document.getElementById("results");
 
 let pyodide = null;
 
+function currentMode() {
+  const el = document.querySelector('input[name="mode"]:checked');
+  return el ? el.value : "daily";
+}
+
+function isPeriod() {
+  return currentMode() !== "daily";
+}
+
 // ---------------------------------------------------------------- UI
 
 function buildChecks() {
-  checks.innerHTML = OPTIONS.map(([code, label]) => `
+  const options = isPeriod() ? PERIOD_OPTIONS : DAILY_OPTIONS;
+  checks.innerHTML = options.map(([code, label]) => `
     <label class="check">
       <input type="checkbox" value="${code}" checked>
       <span>${label}</span>
@@ -44,23 +59,22 @@ function setStatus(text, isError = false) {
 function setBusy(busy) {
   runBtn.disabled = busy || !fileInput.files.length;
   progress.hidden = !busy;
-  if (busy) {
-    progress.value = 10;
+  if (busy) progress.value = 10;
+}
+
+function updateFileLabel() {
+  const files = [...fileInput.files];
+  if (!files.length) {
+    fileName.textContent = "";
+    runBtn.disabled = true;
+    return;
   }
-}
-
-function pickFile(file) {
-  if (!file) return;
-  fileInput.files = toFileList(file);
-  fileName.textContent = file.name;
+  if (isPeriod()) {
+    fileName.textContent = `已选 ${files.length} 个文件`;
+  } else {
+    fileName.textContent = files[0].name;
+  }
   runBtn.disabled = false;
-}
-
-// 把拖入的文件塞回 input（DataTransfer）
-function toFileList(file) {
-  const dt = new DataTransfer();
-  dt.items.add(file);
-  return dt.files;
 }
 
 // ---------------------------------------------------------------- Pyodide
@@ -86,34 +100,35 @@ async function initPyodide() {
   await pyodide.loadPackage(["pandas", "matplotlib"]);
 
   setStatus("加载中文字体 ...");
-  progress.value = 75;
+  progress.value = 70;
   try {
     const fontResp = await fetch("fonts/msyh.ttc");
     if (fontResp.ok) {
-      const fontBuf = new Uint8Array(await fontResp.arrayBuffer());
-      pyodide.FS.writeFile("/tmp/msyh.ttc", fontBuf);
+      pyodide.FS.writeFile("/tmp/msyh.ttc", new Uint8Array(await fontResp.arrayBuffer()));
     }
   } catch (err) {
-    console.warn("字体加载失败，中文可能显示为方框", err);
+    console.warn("字体加载失败", err);
   }
 
-  const src = await (await fetch("data_processing.py?v=2")).text();
-  pyodide.FS.writeFile("/home/pyodide/data_processing.py", src);
+  setStatus("加载处理脚本 ...");
+  progress.value = 85;
+  const daily = await (await fetch("data_processing.py?v=3")).text();
+  pyodide.FS.writeFile("/home/pyodide/data_processing.py", daily);
+  const period = await (await fetch("data_processing_weekly.py?v=2")).text();
+  pyodide.FS.writeFile("/home/pyodide/data_processing_weekly.py", period);
 
   progress.value = 90;
   setStatus("运行环境就绪");
   return pyodide;
 }
 
-// ---------------------------------------------------------------- 处理
+// ---------------------------------------------------------------- 生成 Python 代码
 
-function buildScript(figs, dpi) {
-  const figList = figs.map(f => JSON.stringify(f)).join(", ");
+function commonPrelude() {
   return `
 import sys, types, json, base64, os
 from pathlib import Path
 
-# Pyodide 没有 subprocess / shutil.which，补两个空模块（处理脚本只在桌面版用到）
 sys.modules["subprocess"] = types.ModuleType("subprocess")
 _shutil = types.ModuleType("shutil")
 _shutil.which = lambda *a, **k: None
@@ -121,23 +136,28 @@ _shutil.get_terminal_size = lambda *a, **k: os.terminal_size((80, 24))
 sys.modules["shutil"] = _shutil
 
 sys.path.insert(0, "/home/pyodide")
+import pandas as pd
+pd.read_excel = lambda path, **kwargs: pd.read_csv(path, dtype=str, encoding="utf-8-sig")
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
-import data_processing as dp
 
 font_path = "/tmp/msyh.ttc"
 if os.path.exists(font_path):
     font_manager.fontManager.addfont(font_path)
     plt.rcParams["font.family"] = font_manager.FontProperties(fname=font_path).get_name()
-    plt.rcParams["axes.unicode_minus"] = False
+plt.rcParams["axes.unicode_minus"] = False
+`;
+}
 
-# Pyodide 里没有 openpyxl，前端已转成 CSV，这里用 read_csv 代替 read_excel
-import pandas as pd
-pd.read_excel = lambda path, **kwargs: pd.read_csv(path, dtype=str, encoding="utf-8-sig")
+function buildDailyScript(figs, dpi) {
+  const figList = figs.map(f => JSON.stringify(f)).join(", ");
+  return commonPrelude() + `
+import data_processing as dp
 
-df = dp.load_data(Path("/tmp/input.csv"))
+df = dp.load_data(Path("/tmp/input_0.csv"))
 if df.empty:
     raise RuntimeError("表格里没有有效数据")
 
@@ -163,6 +183,44 @@ json.dumps({k: {"kind": v[0], "data": base64.b64encode(v[1]).decode()} for k, v 
 `;
 }
 
+function buildPeriodScript(figs, dpi, mode, count) {
+  const figList = figs.map(f => JSON.stringify(f)).join(", ");
+  return commonPrelude() + `
+import data_processing_weekly as dw
+
+files = [Path(f"/tmp/input_{i}.csv") for i in range(${count})]
+df = dw.merge_files(files)
+if df.empty:
+    raise RuntimeError("合并后没有有效数据")
+
+folder, _ = dw.period_paths(df, ${JSON.stringify(mode)})
+out = Path(f"/tmp/{folder}")
+out.mkdir(parents=True, exist_ok=True)
+figs = [${figList}]
+made = {}
+
+if "figure" in figs:
+    p = dw.plot_period_panel(df, out, ${JSON.stringify(mode)}, len(files), ${dpi})
+    if p:
+        made[p.name] = ("png", p.read_bytes())
+
+if "data" in figs:
+    p = out / f"{folder}.csv"
+    df.to_csv(p, index=False, encoding="utf-8-sig")
+    made[p.name] = ("csv", p.read_bytes())
+
+json.dumps({k: {"kind": v[0], "data": base64.b64encode(v[1]).decode()} for k, v in made.items()})
+`;
+}
+
+// ---------------------------------------------------------------- 处理
+
+async function fileToCsv(file) {
+  const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_csv(sheet);
+}
+
 function renderFiles(files) {
   results.innerHTML = "";
   const entries = Object.entries(files);
@@ -170,7 +228,6 @@ function renderFiles(files) {
     setStatus("没有生成任何文件，请检查勾选项", true);
     return;
   }
-
   for (const [name, item] of entries) {
     const bytes = Uint8Array.from(atob(item.data), c => c.charCodeAt(0));
     const type = item.kind === "png" ? "image/png" : "text/csv";
@@ -198,8 +255,8 @@ function renderFiles(files) {
 }
 
 async function run() {
-  const file = fileInput.files[0];
-  if (!file) return;
+  const files = [...fileInput.files];
+  if (!files.length) return;
   const figs = selectedFigs();
   if (!figs.length) {
     setStatus("至少勾选一项要生成的内容", true);
@@ -213,14 +270,21 @@ async function run() {
 
     progress.value = 95;
     setStatus("读取 Excel ...");
-    // 用 SheetJS 在前端解析 xlsx，转成 CSV 交给 Python（免装 openpyxl）
-    const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    const csv = XLSX.utils.sheet_to_csv(sheet);
-    py.FS.writeFile("/tmp/input.csv", new TextEncoder().encode(csv));
+    const usePeriod = isPeriod();
+    const list = usePeriod ? files : files.slice(0, 1);
+    for (let i = 0; i < list.length; i++) {
+      const csv = await fileToCsv(list[i]);
+      py.FS.writeFile(`/tmp/input_${i}.csv`, new TextEncoder().encode(csv));
+    }
 
-    setStatus("正在处理，手机上大约需要 10–30 秒 ...");
-    const result = py.runPython(buildScript(figs, 120));
+    setStatus(usePeriod
+      ? `正在合并 ${list.length} 个文件并出图，手机上大约需要 20–60 秒 ...`
+      : "正在处理，手机上大约需要 10–30 秒 ...");
+
+    const script = usePeriod
+      ? buildPeriodScript(figs, 120, currentMode(), list.length)
+      : buildDailyScript(figs, 120);
+    const result = py.runPython(script);
     renderFiles(JSON.parse(result));
   } catch (err) {
     console.error(err);
@@ -235,12 +299,7 @@ async function run() {
 // ---------------------------------------------------------------- 事件
 
 drop.addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", () => {
-  if (fileInput.files.length) {
-    fileName.textContent = fileInput.files[0].name;
-    runBtn.disabled = false;
-  }
-});
+fileInput.addEventListener("change", updateFileLabel);
 
 ["dragenter", "dragover"].forEach(evt =>
   drop.addEventListener(evt, e => { e.preventDefault(); drop.classList.add("dragover"); })
@@ -249,15 +308,25 @@ fileInput.addEventListener("change", () => {
   drop.addEventListener(evt, e => { e.preventDefault(); drop.classList.remove("dragover"); })
 );
 drop.addEventListener("drop", e => {
-  const f = e.dataTransfer.files[0];
-  if (f) pickFile(f);
+  const files = [...e.dataTransfer.files];
+  if (!files.length) return;
+  const dt = new DataTransfer();
+  files.forEach(f => dt.items.add(f));
+  fileInput.files = dt.files;
+  updateFileLabel();
 });
+
+document.querySelectorAll('input[name="mode"]').forEach(el =>
+  el.addEventListener("change", () => {
+    buildChecks();
+    updateFileLabel();
+  })
+);
 
 runBtn.addEventListener("click", run);
 
 buildChecks();
 
-// PWA
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("sw.js").catch(() => {});

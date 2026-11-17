@@ -28,13 +28,18 @@
   h1 { font-size: 22px; margin: 0; letter-spacing: .5px; }
   .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
   main { padding: 14px 16px 40px; max-width: 860px; margin: 0 auto; }
-  .card {
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: 16px; padding: 16px; margin-bottom: 14px;
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+  .modes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+  .modes label {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 9px 4px; background: var(--card-2); border-radius: 10px;
+    font-size: 14px; border: 1px solid transparent;
   }
+  .modes input { accent-color: var(--accent); }
+  .modes label:has(input:checked) { border-color: #2c4a7a; color: #fff; }
   .drop {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 8px; min-height: 120px; border: 1.5px dashed #2f4160; border-radius: 14px;
+    gap: 8px; min-height: 110px; border: 1.5px dashed #2f4160; border-radius: 14px;
     background: var(--card-2); cursor: pointer; text-align: center; padding: 16px;
   }
   .drop.dragover { border-color: var(--accent); background: #182742; }
@@ -73,10 +78,17 @@
 </header>
 <main>
   <section class="card">
+    <div class="modes">
+      <label><input type="radio" name="mode" value="daily" checked> 日报</label>
+      <label><input type="radio" name="mode" value="weekly"> 周报</label>
+      <label><input type="radio" name="mode" value="monthly"> 月报</label>
+      <label><input type="radio" name="mode" value="multi"> 多日</label>
+    </div>
+
     <label class="drop" id="drop">
-      <input type="file" id="file" accept=".xlsx,.xls">
+      <input type="file" id="file" accept=".xlsx,.xls" multiple>
       <span class="big">点击选择 Excel，或拖到这里</span>
-      <span class="hint">气象站导出的 xlsx，时间列在第一列</span>
+      <span class="hint">日报选 1 个；周报/月报选多天，可一次多选</span>
       <span class="file-name" id="fileName"></span>
     </label>
 
@@ -90,7 +102,7 @@
 
   <section class="grid" id="results"></section>
 </main>
-<script src="xlsx.full.min.js"></script>
-<script src="app.js?v=4"></script>
+<script src="xlsx.full.min.js?v=2"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>
