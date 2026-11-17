@@ -102,12 +102,16 @@ async function initPyodide() {
   setStatus("加载中文字体 ...");
   progress.value = 70;
   try {
-    const fontResp = await fetch("fonts/msyh.ttc");
+    setStatus("加载中文字体（2.9 MB）...");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 45000);
+    const fontResp = await fetch("fonts/msyh-subset.ttf", { signal: controller.signal });
+    clearTimeout(timer);
     if (fontResp.ok) {
-      pyodide.FS.writeFile("/tmp/msyh.ttc", new Uint8Array(await fontResp.arrayBuffer()));
+      pyodide.FS.writeFile("/tmp/msyh.ttf", new Uint8Array(await fontResp.arrayBuffer()));
     }
   } catch (err) {
-    console.warn("字体加载失败", err);
+    console.warn("字体加载失败，中文可能显示为方框", err);
   }
 
   setStatus("加载处理脚本 ...");
@@ -144,7 +148,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 
-font_path = "/tmp/msyh.ttc"
+font_path = "/tmp/msyh.ttf"
 if os.path.exists(font_path):
     font_manager.fontManager.addfont(font_path)
     plt.rcParams["font.family"] = font_manager.FontProperties(fname=font_path).get_name()

@@ -1,4 +1,4 @@
-const CACHE = "weather-station-v3";
+const CACHE = "weather-station-v4";
 const ASSETS = [
   "./",
   "./index.html",
@@ -9,7 +9,7 @@ const ASSETS = [
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
-  "./fonts/msyh.ttc",
+  "./fonts/msyh-subset.ttf",
 ];
 
 self.addEventListener("install", event => {
